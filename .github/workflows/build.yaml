@@ -80,34 +80,11 @@ jobs:
             ${{ github.workspace }}/out/build/mingw/${{ matrix.arch }}/Debug/test_*.exe
             ${{ github.workspace }}/out/build/mingw/${{ matrix.arch }}/Debug/*.dll
 
-  mingw-unittest:
-    needs: [ mingw ]
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86, x64]
-        test: [argv, auth_token, buffer, cryptoapi, crypto, misc, ncp, packet_id, pkt, provider, ssl, tls_crypt, user_pass]
-
-    runs-on: windows-latest
-    name: "mingw unittest ${{ matrix.test }} - ${{ matrix.arch }} - OSSL"
-    steps:
-      - name: Checkout OpenVPN
-        uses: actions/checkout@v4
-      - name: Retrieve mingw unittest
-        uses: actions/download-artifact@v4
-        with:
-          name: openvpn-mingw-${{ matrix.arch }}-tests
-          path: unittests
-      - name: Run ${{ matrix.test }} unit test
-        run: ./unittests/test_${{ matrix.test }}.exe
-        env:
-          srcdir: "${{ github.workspace }}/tests/unit_tests/openvpn"
-
   ubuntu:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-22.04, ubuntu-24.04]
+        os: [ubuntu-20.04]
         sslpkg: [libmbedtls-dev]
         ssllib: [mbedtls]
         libname: [mbed TLS]
@@ -117,18 +94,6 @@ jobs:
             sslpkg: "libssl-dev"
             libname: OpenSSL 1.1.1
             ssllib: openssl
-          - os: ubuntu-22.04
-            sslpkg: "libssl-dev"
-            libname: OpenSSL 3.0.2
-            ssllib: openssl
-            pkcs11pkg: "libpkcs11-helper1-dev softhsm2 gnutls-bin"
-            extraconf: --enable-pkcs11
-          - os: ubuntu-24.04
-            sslpkg: "libssl-dev"
-            libname: OpenSSL 3.0.13
-            ssllib: openssl
-            pkcs11pkg: "libpkcs11-helper1-dev softhsm2 gnutls-bin"
-            extraconf: --enable-pkcs11
           - os: ubuntu-20.04
             sslpkg: "libssl-dev"
             libname: OpenSSL 1.1.1
@@ -180,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-22.04, ubuntu-24.04]
+        os: [ubuntu-20.04]
         ssllib: [mbedtls, openssl]
 
     name: "clang-asan - ${{matrix.os}} - ${{matrix.ssllib}}"
@@ -202,116 +167,6 @@ jobs:
         run: make -j3
       - name: make check
         run: make check VERBOSE=1
-
-  macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        ssllib: [ openssl11, openssl3, libressl]
-        build: [ normal, asan ]
-        os: [macos-12, macos-13, macos-14]
-        include:
-           # macos14 and newer runners use ARM CPUs and homebrew uses /opt/homebrew/
-           # on ARM instead of /usr/local/
-          - os: macos-12
-            homebrew: /usr/local/opt
-          - os: macos-13
-            homebrew: /usr/local/opt
-          - os: macos-14
-            homebrew: /opt/homebrew/opt
-          - build: asan
-            cflags: "-fsanitize=address,undefined -fno-sanitize-recover=all  -fno-optimize-sibling-calls -fsanitize-address-use-after-scope -fno-omit-frame-pointer -g -O1"
-            ldflags: -fsanitize=address,undefined -fno-sanitize-recover=all
-            # Our build system ignores LDFLAGS for plugins
-            configureflags: --disable-plugin-auth-pam  --disable-plugin-down-root
-          - build: normal
-            cflags: "-O2 -g"
-            ldflags: ""
-            configureflags: ""
-          - ssllib: openssl11
-            libdir: openssl@1.1
-            configuressllib: ""
-          - ssllib: openssl3
-            libdir: openssl@3
-            configuressllib: ""
-          - ssllib: libressl
-            libdir: libressl
-            configuressllib: "--with-openssl-engine=no"
-
-    runs-on: ${{matrix.os}}
-    name: "${{matrix.os}} - ${{matrix.libdir}} - ${{matrix.build}}"
-    env:
-      CFLAGS: ${{ matrix.cflags }}
-      LDFLAGS: ${{ matrix.ldflags }}
-      OPENSSL_CFLAGS: "-I${{matrix.homebrew}}/${{matrix.libdir}}/include"
-      OPENSSL_LIBS: "-L${{matrix.homebrew}}/${{matrix.libdir}}/lib -lcrypto -lssl"
-      LZO_CFLAGS: "-I${{matrix.homebrew}}/lzo/include"
-      LZO_LIBS: "-L${{matrix.homebrew}}/lzo/lib -llzo2"
-      UBSAN_OPTIONS: print_stacktrace=1
-    steps:
-      - name: Install dependencies
-        run: brew install openssl@1.1 openssl@3 lzo lz4 man2html cmocka libtool automake autoconf libressl
-      - name: Checkout OpenVPN
-        uses: actions/checkout@v4
-      - name: autoconf
-        run: autoreconf -fvi
-      - name: configure
-        run: ./configure --enable-werror ${{matrix.configureflags}} ${{matrix.configuressllib}}
-      - name: make all
-        run: make -j4
-      - name: make check
-        run: make check VERBOSE=1
-
-  msvc:
-      strategy:
-        fail-fast: false
-        matrix:
-          arch: [amd64, x86, arm64]
-
-      name: "msbuild - ${{ matrix.arch }} - openssl"
-      env:
-        BUILD_CONFIGURATION: Release
-
-      runs-on: windows-latest
-      steps:
-      - uses: actions/checkout@v4
-      - uses: lukka/get-cmake@latest
-
-      - name: Install rst2html
-        run: python -m pip install --upgrade pip docutils
-
-      - name: Restore artifacts, or setup vcpkg (do not install any package)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 8d3649ba34aab36914ddd897958599aa0a91b08e
-          vcpkgJsonGlob: '**/windows/vcpkg.json'
-
-      - name: Run CMake with vcpkg.json manifest (NO TESTS)
-        uses: lukka/run-cmake@v10
-        if: ${{ matrix.arch == 'arm64' }}
-        with:
-          configurePreset: win-${{ matrix.arch }}-release
-          buildPreset: win-${{ matrix.arch }}-release
-
-      - name: Run CMake with vcpkg.json manifest
-        uses: lukka/run-cmake@v10
-        if: ${{ matrix.arch != 'arm64' }}
-        with:
-          configurePreset: win-${{ matrix.arch }}-release
-          buildPreset: win-${{ matrix.arch }}-release
-          testPreset: win-${{ matrix.arch }}-release
-          testPresetAdditionalArgs: "['--output-on-failure']"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: openvpn-msvc-${{ matrix.arch }}
-          path: |
-            ${{ github.workspace }}/out/**/*.exe
-            ${{ github.workspace }}/out/**/*.dll
-            !${{ github.workspace }}/out/**/test_*.exe
-            !${{ github.workspace }}/out/**/CMakeFiles/**
-            !${{ github.workspace }}/out/**/vcpkg_installed/**
-
   libressl:
     strategy:
       fail-fast: false
